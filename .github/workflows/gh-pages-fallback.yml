@@ -1,0 +1,77 @@
+name: 🔄 정적 캐시 갱신 (SEO 폴백)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_run:
+    workflows: ["🚀 WordPress 설치 + SQLite DB 초기화"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build-cache:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name != 'workflow_run' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PHP + 의존성 설치
+        run: |
+          sudo apt-get install -y php-cli php-sqlite3 php-mbstring php-xml php-curl sqlite3
+
+      - name: DB 존재 확인
+        run: |
+          if [ ! -f "_db/wordpress.db" ]; then
+            echo "⚠️ _db/wordpress.db 없음 — install-wordpress.yml 먼저 실행 필요"
+            exit 0
+          fi
+          echo "✅ DB: $(du -h _db/wordpress.db | cut -f1)"
+
+      - name: WordPress 정적 캐시 생성
+        env:
+          WP_SITEURL: ${{ vars.WP_SITEURL }}
+        run: |
+          mkdir -p _cache
+          SITEURL="${WP_SITEURL:-http://localhost:8888}"
+          php -S localhost:8888 -t . &
+          SERVER_PID=$!
+          sleep 5
+
+          curl -sf -L --max-time 30 http://localhost:8888/ -o _cache/index.html 2>/dev/null || echo "⚠️ 메인 페이지 캐시 실패"
+          curl -sf -L --max-time 15 http://localhost:8888/sitemap.xml -o /tmp/sitemap.xml 2>/dev/null || true
+
+          if [ -f /tmp/sitemap.xml ]; then
+            grep -o '<loc>[^<]*</loc>' /tmp/sitemap.xml | sed 's|<loc>||;s|</loc>||' | head -30 | while read -r loc; do
+              REL=$(echo "$loc" | sed "s|$SITEURL||;s|http://localhost:8888||")
+              [ -z "$REL" ] || [ "$REL" = "/" ] && continue
+              mkdir -p "_cache${REL}"
+              curl -sf -L --max-time 20 "http://localhost:8888${REL}" -o "_cache${REL}index.html" 2>/dev/null || true
+            done
+          fi
+
+          kill $SERVER_PID 2>/dev/null || true
+          COUNT=$(find _cache -name "*.html" 2>/dev/null | wc -l)
+          echo "✅ 정적 캐시: ${COUNT}개 페이지"
+
+      - name: 캐시 커밋
+        run: |
+          git config user.name "CloudPress Bot"
+          git config user.email "bot@cloudpress.app"
+          git add _cache/
+          git diff --staged --quiet || git commit -m "🔄 정적 캐시 갱신 [$(date '+%Y-%m-%d %H:%M')]" && git push || true
+
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: _cache }
+
+  deploy-pages:
+    needs: build-cache
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: "${{ steps.deployment.outputs.page_url }}" }
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

@@ -1,0 +1,140 @@
+name: 🚀 WordPress 설치 + SQLite DB 초기화
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_reinstall:
+        description: '강제 재설치'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 의존성 설치
+        run: |
+          sudo apt-get install -y sqlite3 php-cli php-sqlite3
+          echo "✅ 의존성 설치 완료"
+
+      - name: WordPress 최신버전 다운로드
+        run: |
+          wget -q https://wordpress.org/latest.tar.gz -O /tmp/wp.tar.gz
+          tar -xzf /tmp/wp.tar.gz -C /tmp/
+          WP_VER=$(grep "wp_version" /tmp/wordpress/wp-includes/version.php | grep -oP "[\d.]+" | head -1)
+          echo "📥 WordPress ${WP_VER} 다운로드 완료"
+          rsync -a --exclude='wp-config.php' --exclude='wp-config-sample.php' /tmp/wordpress/ ./
+          echo "✅ WordPress 파일 설치: $(find . -name '*.php' -not -path './.git/*' | wc -l)개 PHP 파일"
+
+      - name: SQLite Database Integration 플러그인 설치
+        run: |
+          mkdir -p wp-content/plugins wp-content/themes wp-content/uploads _db
+          wget -q "https://downloads.wordpress.org/plugin/sqlite-database-integration.latest-stable.zip" -O /tmp/sqlite.zip
+          unzip -q /tmp/sqlite.zip -d wp-content/plugins/
+          PLUGIN_DIR="wp-content/plugins/sqlite-database-integration"
+          if [ -f "${PLUGIN_DIR}/db.copy" ]; then
+            cp "${PLUGIN_DIR}/db.copy" wp-content/db.php
+            echo "✅ db.php 드롭인 설치 완료 (db.copy)"
+          elif [ -f "${PLUGIN_DIR}/db.php" ]; then
+            cp "${PLUGIN_DIR}/db.php" wp-content/db.php
+            echo "✅ db.php 드롭인 설치 완료 (db.php)"
+          else
+            echo "❌ db.php 없음"; ls "${PLUGIN_DIR}/"; exit 1
+          fi
+
+      - name: Twenty Twenty-Four 테마 설치
+        run: |
+          if [ ! -d "wp-content/themes/twentytwentyfour" ]; then
+            wget -q "https://downloads.wordpress.org/theme/twentytwentyfour.latest-stable.zip" -O /tmp/theme.zip
+            unzip -q /tmp/theme.zip -d wp-content/themes/
+            echo "✅ 테마 설치 완료"
+          else
+            echo "✅ 테마 이미 존재"
+          fi
+
+      - name: SQLite DB 초기화
+        env:
+          ADMIN_USER: admin
+          ADMIN_PASS: F97%OnyOFhiqAodm
+          ADMIN_EMAIL: admin@e9e3c0ba.cloudpress.app
+          SITE_URL: https://cp-e9e3c0ba-wp.choichoi3227.workers.dev
+          SITE_NAME: test100991
+          DB_PREFIX: wp_
+        run: |
+          NOW=$(date -u +"%Y-%m-%d %H:%M:%S")
+          PFX="$DB_PREFIX"
+          DB="_db/wordpress.db"
+
+          echo "🗄️ SQLite DB 테이블 생성 중..."
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}options (option_id INTEGER PRIMARY KEY AUTOINCREMENT, option_name TEXT NOT NULL DEFAULT '' UNIQUE, option_value TEXT NOT NULL DEFAULT '', autoload TEXT NOT NULL DEFAULT 'yes');"
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}users (ID INTEGER PRIMARY KEY AUTOINCREMENT, user_login TEXT NOT NULL DEFAULT '', user_pass TEXT NOT NULL DEFAULT '', user_nicename TEXT NOT NULL DEFAULT '', user_email TEXT NOT NULL DEFAULT '', user_url TEXT NOT NULL DEFAULT '', user_registered TEXT NOT NULL DEFAULT '', user_activation_key TEXT NOT NULL DEFAULT '', user_status INTEGER NOT NULL DEFAULT 0, display_name TEXT NOT NULL DEFAULT '');"
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}usermeta (umeta_id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL DEFAULT 0, meta_key TEXT DEFAULT NULL, meta_value TEXT DEFAULT NULL);"
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}posts (ID INTEGER PRIMARY KEY AUTOINCREMENT, post_author INTEGER NOT NULL DEFAULT 0, post_date TEXT NOT NULL DEFAULT '', post_date_gmt TEXT NOT NULL DEFAULT '', post_content TEXT NOT NULL DEFAULT '', post_title TEXT NOT NULL DEFAULT '', post_excerpt TEXT NOT NULL DEFAULT '', post_status TEXT NOT NULL DEFAULT 'publish', comment_status TEXT NOT NULL DEFAULT 'open', ping_status TEXT NOT NULL DEFAULT 'open', post_password TEXT NOT NULL DEFAULT '', post_name TEXT NOT NULL DEFAULT '', to_ping TEXT NOT NULL DEFAULT '', pinged TEXT NOT NULL DEFAULT '', post_modified TEXT NOT NULL DEFAULT '', post_modified_gmt TEXT NOT NULL DEFAULT '', post_content_filtered TEXT NOT NULL DEFAULT '', post_parent INTEGER NOT NULL DEFAULT 0, guid TEXT NOT NULL DEFAULT '', menu_order INTEGER NOT NULL DEFAULT 0, post_type TEXT NOT NULL DEFAULT 'post', post_mime_type TEXT NOT NULL DEFAULT '', comment_count INTEGER NOT NULL DEFAULT 0);"
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}postmeta (meta_id INTEGER PRIMARY KEY AUTOINCREMENT, post_id INTEGER NOT NULL DEFAULT 0, meta_key TEXT DEFAULT NULL, meta_value TEXT DEFAULT NULL);"
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}comments (comment_ID INTEGER PRIMARY KEY AUTOINCREMENT, comment_post_ID INTEGER NOT NULL DEFAULT 0, comment_author TEXT NOT NULL DEFAULT '', comment_author_email TEXT NOT NULL DEFAULT '', comment_author_url TEXT NOT NULL DEFAULT '', comment_author_IP TEXT NOT NULL DEFAULT '', comment_date TEXT NOT NULL DEFAULT '', comment_date_gmt TEXT NOT NULL DEFAULT '', comment_content TEXT NOT NULL DEFAULT '', comment_karma INTEGER NOT NULL DEFAULT 0, comment_approved TEXT NOT NULL DEFAULT '1', comment_agent TEXT NOT NULL DEFAULT '', comment_type TEXT NOT NULL DEFAULT 'comment', comment_parent INTEGER NOT NULL DEFAULT 0, user_id INTEGER NOT NULL DEFAULT 0);"
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}commentmeta (meta_id INTEGER PRIMARY KEY AUTOINCREMENT, comment_id INTEGER NOT NULL DEFAULT 0, meta_key TEXT DEFAULT NULL, meta_value TEXT DEFAULT NULL);"
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}terms (term_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL DEFAULT '', slug TEXT NOT NULL DEFAULT '', term_group INTEGER NOT NULL DEFAULT 0);"
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}term_taxonomy (term_taxonomy_id INTEGER PRIMARY KEY AUTOINCREMENT, term_id INTEGER NOT NULL DEFAULT 0, taxonomy TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', parent INTEGER NOT NULL DEFAULT 0, count INTEGER NOT NULL DEFAULT 0);"
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}term_relationships (object_id INTEGER NOT NULL DEFAULT 0, term_taxonomy_id INTEGER NOT NULL DEFAULT 0, term_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (object_id, term_taxonomy_id));"
+          sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS ${PFX}links (link_id INTEGER PRIMARY KEY AUTOINCREMENT, link_url TEXT NOT NULL DEFAULT '', link_name TEXT NOT NULL DEFAULT '', link_image TEXT NOT NULL DEFAULT '', link_target TEXT NOT NULL DEFAULT '', link_description TEXT NOT NULL DEFAULT '', link_visible TEXT NOT NULL DEFAULT 'Y', link_owner INTEGER NOT NULL DEFAULT 1, link_rating INTEGER NOT NULL DEFAULT 0, link_updated TEXT NOT NULL DEFAULT '', link_rel TEXT NOT NULL DEFAULT '', link_notes TEXT NOT NULL DEFAULT '', link_rss TEXT NOT NULL DEFAULT '');"
+
+          echo "📝 기본 옵션 삽입..."
+          sqlite3 "$DB" "INSERT OR IGNORE INTO ${PFX}options (option_name,option_value,autoload) VALUES ('siteurl','$SITE_URL','yes'),('home','$SITE_URL','yes'),('blogname','$SITE_NAME','yes'),('blogdescription','','yes'),('admin_email','$ADMIN_EMAIL','yes'),('blogpublic','1','yes'),('blog_charset','UTF-8','yes'),('date_format','Y년 n월 j일','yes'),('time_format','A g:i','yes'),('start_of_week','0','yes'),('timezone_string','Asia/Seoul','yes'),('permalink_structure','/%postname%/','yes'),('template','twentytwentyfour','yes'),('stylesheet','twentytwentyfour','yes'),('current_theme','Twenty Twenty-Four','yes'),('active_plugins','a:1:{i:0;s:51:"sqlite-database-integration/sqlite-database-integration.php";}','yes'),('wp_db_version','57155','yes'),('initial_db_version','57155','yes'),('db_version','57155','yes'),('posts_per_page','10','yes'),('default_category','1','yes'),('cp_installed_at','$NOW','yes');"
+          sqlite3 "$DB" "INSERT OR IGNORE INTO ${PFX}terms VALUES (1,'미분류','uncategorized',0);"
+          sqlite3 "$DB" "INSERT OR IGNORE INTO ${PFX}term_taxonomy VALUES (1,1,'category','',0,0);"
+          sqlite3 "$DB" "INSERT OR IGNORE INTO ${PFX}posts (ID,post_author,post_date,post_date_gmt,post_content,post_title,post_excerpt,post_status,post_name,post_modified,post_modified_gmt,post_type,guid,comment_status,ping_status,menu_order,post_parent) VALUES (1,1,'$NOW','$NOW','WordPress에 오신 것을 환영합니다!','안녕하세요!','','publish','hello-world','$NOW','$NOW','post','$SITE_URL/?p=1','open','open',0,0);"
+          sqlite3 "$DB" "INSERT OR IGNORE INTO ${PFX}term_relationships VALUES (1,1,0);"
+          sqlite3 "$DB" "UPDATE ${PFX}term_taxonomy SET count=1 WHERE term_taxonomy_id=1;"
+
+          TABLES=$(sqlite3 "$DB" "SELECT count(*) FROM sqlite_master WHERE type='table';")
+          echo "✅ DB 초기화 완료: ${TABLES}개 테이블 | 크기: $(du -h $DB | cut -f1)"
+
+      - name: 관리자 계정 생성 (phpass 해시)
+        env:
+          ADMIN_USER: admin
+          ADMIN_PASS: F97%OnyOFhiqAodm
+          ADMIN_EMAIL: admin@e9e3c0ba.cloudpress.app
+          SITE_URL: https://cp-e9e3c0ba-wp.choichoi3227.workers.dev
+          DB_PREFIX: wp_
+        run: |
+          NOW=$(date -u +"%Y-%m-%d %H:%M:%S")
+          PFX="$DB_PREFIX"
+          DB="_db/wordpress.db"
+
+          # phpass 해시 생성 (base64 인코딩으로 YAML 특수문자 충돌 완전 방지)
+          echo "aW1wb3J0IGhhc2hsaWIsIG9zCnB3ID0gb3MuZW52aXJvbi5nZXQoJ0FETUlOX1BBU1MnLCAnJykKaXRvYTY0ID0gJy4vMDEyMzQ1Njc4OUFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXonCmRlZiBlbmNvZGU2NChoLCBuKToKICAgIG8sIGkgPSAnJywgMAogICAgd2hpbGUgaSA8IG46CiAgICAgICAgdiA9IGhbaV07IGkgKz0gMTsgbyArPSBpdG9hNjRbdiAmIDB4M2ZdCiAgICAgICAgaWYgaSA8IG46IHYgfD0gaFtpXSA8PCA4CiAgICAgICAgbyArPSBpdG9hNjRbKHYgPj4gNikgJiAweDNmXQogICAgICAgIGlmIGkgPj0gbjogYnJlYWsKICAgICAgICBpICs9IDEKICAgICAgICBpZiBpIDwgbjogdiB8PSBoW2ldIDw8IDE2CiAgICAgICAgbyArPSBpdG9hNjRbKHYgPj4gMTIpICYgMHgzZl0KICAgICAgICBpZiBpID49IG46IGJyZWFrCiAgICAgICAgaSArPSAxOyBvICs9IGl0b2E2NFsodiA+PiAxOCkgJiAweDNmXQogICAgcmV0dXJuIG8Kc2FsdCA9ICcnLmpvaW4oW2l0b2E2NFtiICUgNjRdIGZvciBiIGluIG9zLnVyYW5kb20oOCldKQpwZnggPSAnJFAkJyArIGl0b2E2NFs4XSArIHNhbHQKY250ID0gMSA8PCA4CmIgPSBwdy5lbmNvZGUoKQpoID0gaGFzaGxpYi5tZDUoKHNhbHQgKyBwdykuZW5jb2RlKCkpLmRpZ2VzdCgpCmZvciBfIGluIHJhbmdlKGNudCk6IGggPSBoYXNobGliLm1kNShieXRlcyhoKSArIGIpLmRpZ2VzdCgpCnByaW50KHBmeCArIGVuY29kZTY0KGxpc3QoaCksIDE2KSkK" | base64 -d > /tmp/phpass.py
+          PASS_HASH=$(python3 /tmp/phpass.py)
+          echo "  phpass 앞 6자리: ${PASS_HASH:0:6}..."
+          sqlite3 "$DB" "INSERT OR REPLACE INTO ${PFX}users (ID,user_login,user_pass,user_nicename,user_email,user_url,user_registered,user_status,display_name) VALUES (1,'$ADMIN_USER','$PASS_HASH','$ADMIN_USER','$ADMIN_EMAIL','$SITE_URL','$NOW',0,'$ADMIN_USER');"
+          sqlite3 "$DB" "INSERT OR IGNORE INTO ${PFX}usermeta (user_id,meta_key,meta_value) VALUES (1,'${PFX}capabilities','a:1:{s:13:"administrator";b:1;}');"
+          sqlite3 "$DB" "INSERT OR IGNORE INTO ${PFX}usermeta (user_id,meta_key,meta_value) VALUES (1,'${PFX}user_level','10');"
+          sqlite3 "$DB" "INSERT OR IGNORE INTO ${PFX}usermeta (user_id,meta_key,meta_value) VALUES (1,'admin_color','fresh');"
+          sqlite3 "$DB" "INSERT OR IGNORE INTO ${PFX}usermeta (user_id,meta_key,meta_value) VALUES (1,'rich_editing','1');"
+          sqlite3 "$DB" "INSERT OR IGNORE INTO ${PFX}usermeta (user_id,meta_key,meta_value) VALUES (1,'show_admin_bar_front','1');"
+          echo "✅ 관리자 계정 생성 완료: $ADMIN_USER"
+
+      - name: wp-config.php 확인
+        run: |
+          [ -f wp-config.php ] && echo "✅ wp-config.php 존재" || { echo "❌ wp-config.php 없음"; exit 1; }
+
+      - name: 전체 파일 커밋 & 푸시
+        run: |
+          git config user.name "CloudPress Bot"
+          git config user.email "bot@cloudpress.app"
+          git add -A
+          TOTAL=$(git diff --staged --name-only | wc -l | tr -d ' ')
+          if git diff --staged --quiet; then
+            echo "변경사항 없음"
+          else
+            git commit -m "🚀 WordPress 설치 완료 + SQLite DB 초기화 (${TOTAL}개 파일)"
+            git push
+            echo "✅ 커밋 완료: ${TOTAL}개 파일"
+          fi
+          echo "📊 레포 총 파일: $(find . -not -path './.git/*' -type f | wc -l)개"

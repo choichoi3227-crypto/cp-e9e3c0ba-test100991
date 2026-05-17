@@ -1,0 +1,55 @@
+name: ☁️ Cloudflare Worker 재배포
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['worker.js', 'php-runner.js', 'wrangler.toml', 'wrangler-php.toml']
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js 22 설정 (Wrangler 필수)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Wrangler 설치
+        run: npm install -g wrangler@latest
+
+      - name: PHP Runner 배포 (먼저)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ vars.CF_API_TOKEN }}
+          CLOUDFLARE_API_KEY: ${{ vars.CF_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ vars.CF_EMAIL }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
+        run: |
+          # Global API Key 우선, 없으면 API Token 사용
+          if [ -n "$CLOUDFLARE_API_KEY" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
+            export CLOUDFLARE_API_TOKEN=""
+          fi
+          if [ -f "php-runner.js" ]; then
+            npx wrangler deploy --config wrangler-php.toml
+            echo "✅ PHP Runner 배포 완료: cp-e9e3c0ba-wp-php"
+          else
+            echo "⚠️ php-runner.js 없음 — PHP Runner 배포 건너뜀"
+          fi
+
+      - name: 메인 Worker 배포
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ vars.CF_API_TOKEN }}
+          CLOUDFLARE_API_KEY: ${{ vars.CF_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ vars.CF_EMAIL }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_KEY" ] && [ -n "$CLOUDFLARE_EMAIL" ]; then
+            export CLOUDFLARE_API_TOKEN=""
+          fi
+          npx wrangler deploy --config wrangler.toml
+          echo "✅ 메인 Worker 배포 완료: cp-e9e3c0ba-wp"
